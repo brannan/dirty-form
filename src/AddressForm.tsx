@@ -12,17 +12,48 @@ interface FormValues {
   savedTimestamp?: number // Javascript timestamp of last save to local storage
 }
 
+// TODO: Move this and the useAutoSave hook to their own file
+// debounce function to prevent saving every key stroke
+let debounce = (
+  fn: Function,
+  delay: number,
+  timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | undefined>
+) => {
+  return function (this: any, ...args: any[]) {
+    clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => {
+      fn.apply(this, args)
+    }, delay)
+  }
+}
+
 // Custom hook to save form data to local storage
-const useAutoSave = (values: FormValues, dirty: boolean) => {
-  useEffect(() => {
-    const saveFormData = (formData: FormValues) => {
-      console.log("Saving: ", values)
-      localStorage.setItem(localStorageKey, JSON.stringify(formData))
-    }
+const useAutoSave = (key: string, values: FormValues, dirty: boolean) => {
+  const debounceTime = 1500 // wait this long after last key press to save
+  const saveInterval = 15000 // save no more often than
+  const debounceTimer = useRef<ReturnType<typeof setTimeout>>()
+  const saveTimer = useRef<ReturnType<typeof setInterval>>()
+
+  // Save the form data to local storage if dirty
+  const saveData = () => {
     if (dirty) {
-      saveFormData(values)
+      localStorage.setItem(key, JSON.stringify(values))
     }
-  }, [values, dirty])
+  }
+
+  // Start an interval to save data every saveInterval
+  useEffect(() => {
+    saveTimer.current = setInterval(() => {
+      dirty && saveData()
+    }, saveInterval)
+    return () => clearInterval(saveTimer.current)
+  }, [dirty]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const debouncedSaveData = debounce(saveData, debounceTime, debounceTimer)
+
+  useEffect(() => {
+    debouncedSaveData()
+  }, [values, debouncedSaveData])
 }
 
 // TODO: Simulate loading this from the server
@@ -34,22 +65,8 @@ const initialValues: FormValues = {
 }
 
 const AddressForm = () => {
-  const savedData = JSON.parse(localStorage.getItem(localStorageKey) || 'null')
+  const savedData = JSON.parse(localStorage.getItem(localStorageKey) || "null")
   let firstRun = useRef(true) // StrictMode runs everything twice, so we need to ignore the first run
-
-  useEffect(() => {
-    if (savedData && firstRun.current) {
-      firstRun.current = false
-      if (!window.confirm("Load saved form data?")) {
-        console.log("Deleting saved form data: ")
-        formik.resetForm({values: initialValues})
-        localStorage.removeItem(localStorageKey)
-      } else {
-        console.log("Loading saved form data: ", savedData)
-        formik.setValues(savedData)
-      }
-    }
-  }, [])
 
   const formik = useFormik<FormValues>({
     initialValues: savedData || initialValues,
@@ -65,10 +82,26 @@ const AddressForm = () => {
         alert(JSON.stringify(values, null, 2))
         setSubmitting(false)
       }, 400)
+      // Delete savedData
+      localStorage.removeItem(localStorageKey)
     },
   })
 
-  useAutoSave(formik.values, formik.dirty)
+  useEffect(() => {
+    if (savedData && firstRun.current) {
+      firstRun.current = false
+      if (!window.confirm("Load saved form data?")) {
+        console.log("Deleting saved form data: ")
+        formik.resetForm({ values: initialValues })
+        localStorage.removeItem(localStorageKey)
+      } else {
+        console.log("Loading saved form data: ", savedData)
+        formik.setValues(savedData)
+      }
+    }
+  }, [formik, savedData])
+
+  useAutoSave(localStorageKey, formik.values, formik.dirty)
 
   return (
     <form onSubmit={formik.handleSubmit}>
